@@ -38,6 +38,23 @@ SUBAGENTS_NOTE = (
 # --------------------------------------------------------------------------------------------------
 
 
+class ShLocalShellBackend(LocalShellBackend):
+    def execute(self, command: str, *, timeout: int | None = None):
+        sh_exe = r"C:\Program Files\Git\bin\sh.exe"
+        if sys.platform == "win32" and Path(sh_exe).exists():
+            import subprocess
+            orig_run = subprocess.run
+            def win_run(*a, **k):
+                k["shell"] = False
+                return orig_run([sh_exe, "-c", command], **k)
+            subprocess.run = win_run
+            try:
+                return super().execute(command, timeout=timeout)
+            finally:
+                subprocess.run = orig_run
+        return super().execute(command, timeout=timeout)
+
+
 def make_backend(sandbox: Path):
     """Tạo backend (môi trường thực thi) cho tác tử.
 
@@ -48,8 +65,14 @@ def make_backend(sandbox: Path):
       - KHÔNG chuyển biến môi trường của bạn vào shell của tác tử (khóa API không được lộ).
     """
     python_bin = str(Path(sys.executable).parent)
+    bin_dir = sandbox / ".bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    py3_script = bin_dir / "python3"
+    if not py3_script.exists():
+        py3_script.write_text("#!/bin/sh\nexec python \"$@\"\n", encoding="utf-8")
+
     if sys.platform == "win32":
-        path_parts = [python_bin]
+        path_parts = [str(bin_dir), python_bin]
         git_usr_bin = Path("C:/Program Files/Git/usr/bin")
         if git_usr_bin.exists():
             path_parts.append(str(git_usr_bin))
@@ -59,20 +82,23 @@ def make_backend(sandbox: Path):
         path_parts.extend(["C:/Windows/System32", "C:/Windows"])
         path_str = ";".join(path_parts)
     else:
-        path_str = f"{python_bin}:/usr/local/bin:/usr/bin:/bin"
+        path_str = f"{bin_dir}:{python_bin}:/usr/local/bin:/usr/bin:/bin"
 
     env = {
         "PATH": path_str,
         "HOME": str(sandbox),
         "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
     }
-    return LocalShellBackend(
+    return ShLocalShellBackend(
         root_dir=sandbox,
         virtual_mode=True,
         inherit_env=False,
         env=env,
         timeout=120,
     )
+
 
 
 def build_agent(sandbox: Path, mode: str = "single", use_skills: bool = False, model=None):
@@ -107,10 +133,36 @@ def build_agent(sandbox: Path, mode: str = "single", use_skills: bool = False, m
         prompt = prompt + SKILLS_NOTE
 
     llm = model if model is not None else make_model()
+
+    # Thêm cơ chế tự động chờ và thử lại khi gặp giới hạn tốc độ (429 RateLimit)
+    if hasattr(llm, "_generate") and not getattr(llm, "_is_resilient", False):
+        orig_gen = llm._generate
+        def resilient_generate(*args, **kwargs):
+            if type(llm).__name__ != "ScriptedChatModel":
+                import time
+                time.sleep(4.0)
+            for attempt in range(8):
+                try:
+                    return orig_gen(*args, **kwargs)
+                except Exception as exc:
+                    err_str = str(exc)
+                    if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "RateLimit" in err_str) and attempt < 7:
+                        import re, time
+                        delay_match = re.search(r"retry in ([0-9.]+)s", err_str)
+                        delay = float(delay_match.group(1)) + 2.0 if delay_match else 10.0
+                        time.sleep(delay)
+                    else:
+                        raise
+            return orig_gen(*args, **kwargs)
+        llm._generate = resilient_generate
+        llm._is_resilient = True
+
+
     return create_deep_agent(
         model=llm,
         system_prompt=prompt,
         backend=make_backend(sandbox),
         **kwargs,
     )
+
 

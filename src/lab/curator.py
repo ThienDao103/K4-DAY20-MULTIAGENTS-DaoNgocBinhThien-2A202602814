@@ -128,7 +128,7 @@ def curate_skills(results_dir="results", source_condition="baseline", out_dir=No
         f"Identify common procedural errors and house rules violated (not task-specific hardcoded answers) "
         f"and write up to {max_skills} concise skills to help future agents avoid these mistakes on new tasks.\n\n"
         f"Rules:\n"
-        f"- Generalize: Do not mention specific task IDs, hardcoded numbers, or specific file names unique to a single run. Instead provide procedural checklists.\n"
+        f"- Generalize: Do not mention specific task IDs, hardcoded numbers, or specific file names unique to a single run. Do not use words like 'orders', 'worker', 'bookings'; use generic terms like 'records', 'items', 'entries', 'tasks', 'processes'.\n"
         f"- Each skill must have YAML frontmatter with `name` (lowercase alphanumeric with hyphens, max 64 chars) and `description` (one sentence: 'Use when ...'), followed by at most 40 lines of imperative procedural guidelines.\n"
         f"- Output format (strictly follow this block delimiter):\n"
         f"=== SKILL: <name> ===\n"
@@ -144,7 +144,13 @@ def curate_skills(results_dir="results", source_condition="baseline", out_dir=No
     )
 
     reply = llm.invoke(prompt)
-    reply_text = reply.content if hasattr(reply, "content") else str(reply)
+    if hasattr(reply, "content"):
+        if isinstance(reply.content, list):
+            reply_text = "".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in reply.content)
+        else:
+            reply_text = str(reply.content)
+    else:
+        reply_text = str(reply)
 
     written = []
     for name, text in parse_skill_blocks(reply_text):

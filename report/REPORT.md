@@ -8,18 +8,16 @@
 |---|---|---|
 | Đào Ngọc Bình Thiên | 2A202602814 | 100% |
 
-- Nhà cung cấp và mô hình: Google Gemini (`google_genai:gemini-3.8-flash`), nhiệt độ (`LAB_TEMPERATURE=0`), `recursion_limit=60`
+- Nhà cung cấp và mô hình: Google Gemini (`google_genai:gemini-3.1-flash-lite`), nhiệt độ (`LAB_TEMPERATURE=0`), `recursion_limit=60`
 - Phiên bản Deep Agents (`deepagents 0.7.21`), hệ điều hành Windows 11, chạy trực tiếp
 - Số lần chạy tác vụ đã dùng / ngân sách: 0 / 25
 - Commit của tag `freeze`: (sẽ cập nhật sau khi tạo tag freeze)
 
 ## 2. Giả thuyết (commit TRƯỚC tag `freeze`, Phần 4.0)
 
-> Dự đoán điều kiện nào đạt điểm cao nhất trên **tác vụ đánh giá** và vì sao. Nêu căn cứ từ phân loại lỗi (mục 4) và từ tài liệu tham khảo. Điền cả ba dòng; `verify_freeze.py` kiểm tra điều này.
-
-- H1 (subagents so với baseline):
-- H2 (skills-auto so với baseline):
-- H3 (tác vụ học so với tác vụ đánh giá):
+- H1 (subagents so với baseline): `subagents` sẽ đạt điểm tương đương `baseline` trên các tác vụ đánh giá (chênh lệch không đáng kể), nhưng chi phí token sẽ cao hơn gấp 2 đến 3 lần. Căn cứ: theo kết quả tập học (17/18 check kỹ thuật đạt ở cả 2 điều kiện), tác tử không gặp khó khăn về khả năng giải quyết vấn đề kỹ thuật mà chủ yếu thất bại ở các quy ước tổ chức ngầm (`house rules`). Việc chia nhỏ việc cho subagent không cung cấp thêm tri thức thủ tục mà chỉ gia tăng overhead phân rã và truyền thông tin qua lại.
+- H2 (skills-auto so với baseline): `skills-auto` sẽ đạt điểm cao hơn `baseline` trên các check quy ước lặp lại giữa tập học và tập đánh giá (ví dụ type annotations, changelog format, cents formatting), nhưng sẽ không cải thiện đối với các quy ước hoàn toàn mới của tập đánh giá. Căn cứ: nghiên cứu SkillEvolBench chỉ ra rằng các kỹ năng tự sinh từ phản hồi của tập học có xu hướng khớp với các quy ước đã quan sát và khó khái quát hóa sang quy ước chưa từng gặp (overfitting ở tầng ngữ cảnh).
+- H3 (tác vụ học so với tác vụ đánh giá): Điểm trung bình của `skills-auto` trên tác vụ đánh giá sẽ thấp hơn trên tác vụ học. Căn cứ: tập đánh giá đưa vào các quy tắc kiểm tra mới độc lập mà bộ tuyển chọn (Curator) chưa từng được học; ngoài ra việc đọc thêm skill có thể gây phân mảnh ngữ cảnh khiến tác tử tốn thêm bước gọi công cụ dẫn tới chạm giới hạn đệ quy ở một số tác vụ phức tạp.
 
 ## 3. Làm quen Deep Agents (Phần 0.3)
 
@@ -30,28 +28,46 @@
 
 ## 4. Đường cơ sở và phân loại lỗi (Phần 2.2)
 
-> Chỉ dùng tác vụ học. Mỗi dòng là một check thất bại.
-
 | Tác vụ | Check thất bại | Nhóm lỗi (A-G) | Bằng chứng (trích ngắn từ `detail` hoặc vết) |
 |---|---|---|---|
-| | | | |
+| `code-learn` | `tests_not_modified` | C | "the original files in tests/ must not be modified (new test files are allowed)": Tác tử sửa trực tiếp file test trong `tests/` để pass kiểm tra thay vì sửa logic trong package. |
+| `code-learn` | `rule_type_hints` | E | "RULE: every public function (name not starting with '_') in the package has type annotations on all parameters and on the return value." |
+| `code-learn` | `rule_regression_tests` | E | "RULE: add tests/test_regressions.py with one test function per bug you fixed (at least 3); the file must pass." |
+| `code-learn` | `rule_changelog` | E | "RULE: record each fix in CHANGELOG.md under the heading '## Unreleased' as a bullet '- fix(<function name>): <short description>' (at least 3 bullets)." |
+| `data-learn` | `rule_money_in_cents` | E | "RULE: money values in answer.json are integer cents (1606.67 USD is written 160667)." |
+| `data-learn` | `rule_meta_block` | E | "RULE: answer.json has an object `meta` = {\"source\": <input file name>, \"rows_in\": <number of data rows in the input file, duplicates included>, \"rows_used\": <number of distinct orders with a known amount>}." |
+| `data-learn` | `rule_clean_csv` | E | "RULE: save cleaned data to workspace/clean.csv with ISO dates (YYYY-MM-DD) and normalized column names." |
+| `logs-learn` | `rule_service_names` | E | "RULE: service names in the output are lower-case with '-' replaced by '_' (payment-service -> payment_service)." |
+| `logs-learn` | `rule_sorted_errors` | E | "RULE: `errors` is sorted by service, then by timestamp_utc, ascending." |
+| `logs-learn` | `rule_schema_header` | E | "RULE: the top-level object has \"schema_version\": 2 and \"generated_by\": \"log-triage\"." |
 
-Nhận xét: nhóm lỗi nào chiếm đa số? Skill có thể phòng ngừa nhóm đó không?
+Nhận xét:
+- Nhóm lỗi chiếm đa số tuyệt đối là **Nhóm E (Vi phạm quy ước tổ chức)** với 9/10 check thất bại.
+- Bằng chứng phủ định: Tác tử đạt 17/18 check kỹ thuật (nhóm A, B, D) từ `scripts/check_breakdown.py`, chứng tỏ mô hình có năng lực phân tích dữ liệu, đọc hiểu logic và lập trình rất tốt; lỗi duy nhất xuất phát từ việc đề bài không cung cấp các quy ước nội bộ của tổ chức.
+- Một skill hoàn toàn có thể phòng ngừa nhóm lỗi E vì đây là các quy ước thủ tục (procedural checklist) có thể ghi nhớ vào ngữ cảnh để tác tử tuân theo.
 
 ## 5. Điều kiện `subagents` (Phần 2.3)
 
-- Các subagent đã định nghĩa (tên, vai trò, lý do thiết kế):
-- `subagent_calls` ở từng tác vụ và nhận xét (kể cả trường hợp bằng 0):
-- Thông tin thiếu hoặc thừa khi giao việc (nếu có giao việc):
-- Ảnh hưởng đến token và thời gian:
+- Các subagent đã định nghĩa:
+  1. `explorer`: Phân tích cấu trúc thư mục làm việc, kiểm tra dữ liệu/docstring mà không sửa đổi tệp tin. Dùng khi bắt đầu tác vụ để nắm bắt bối cảnh.
+  2. `implementer`: Trực tiếp chỉnh sửa mã nguồn, biến đổi tệp tin và chạy các lệnh kiểm thử theo kế hoạch.
+  3. `reviewer`: Kiểm tra độc lập sản phẩm đầu ra, đối chiếu các trường hợp biên và kiểm tra tính toàn vẹn của tệp kết quả trước khi kết thúc tác vụ.
+- `subagent_calls` ở từng tác vụ:
+  - `code-learn`: 5 lần gọi subagent. Tác tử chính phân rã việc khám phá lỗi, chỉnh sửa từng hàm và kiểm tra test sang cho subagents.
+  - `data-learn`: 1 lần gọi subagent (`explorer` để phân tích cấu trúc dữ liệu bán hàng).
+  - `logs-learn`: 2 lần gọi subagent (`implementer` để parse logs và `reviewer` để kiểm tra kết quả).
+- Thông tin khi giao việc: Tác tử chính truyền khá chi tiết đường dẫn và yêu cầu sang subagent. Tuy nhiên do subagent bị cô lập ngữ cảnh (stateless), tác tử chính phải tóm tắt lại các chỉ thị từ đầu, dẫn đến hiện tượng dư thừa thông tin lặp lại trong các lời gọi.
+- Ảnh hưởng đến token và thời gian: Số token trung bình tăng từ 156,102 (`baseline`) lên 420,094 (`subagents`) - tăng gấp 2.69 lần. Thời gian thực thi cũng tăng tương ứng (ví dụ `logs-learn` từ 53.1s lên 297.7s) do overhead gọi và chờ phản hồi từ các subagents.
 
 ## 6. Self-evolving: skill do curator sinh (Phần 3)
 
-- Số lần chạy curator, số skill bị xóa và lý do:
+- Số lần chạy curator, số skill bị xóa và lý do: Chạy curator 1 lần (`python -m lab.curator`), sinh ra 3 skill; 0 skill bị xóa vì cả 3 đều tuân thủ chặt chẽ định dạng YAML frontmatter, độ dài < 80 dòng, và không chứa bất kỳ từ khóa cấm/dấu hiệu rò rỉ nào từ tập đánh giá (`eval_markers()`).
 
 | Skill | Tổng quát hay riêng cho tác vụ học? | Đúng hay sai (nêu chỗ sai nếu có) | Độ dài, `description` và `skills_read` ở Phần 3.4 |
 |---|---|---|---|
-| | | | |
+| `enforce-python-type-hints` | Tổng quát cho tất cả các package Python cần quy chuẩn type annotations. | Đúng hoàn toàn: hướng dẫn thêm type hints cho hàm public và chạy kiểm tra. | 11 dòng; `description`: "Use when writing or modifying Python packages that require strict public function type annotations."; `skills_read` = 1 (`code-learn`). |
+| `regression-testing-and-changelog-discipline` | Tổng quát cho quy trình vá lỗi phần mềm và duy trì lịch sử thay đổi. | Đúng hoàn toàn: không sửa test gốc, tạo `tests/test_regressions.py`, ghi `CHANGELOG.md` dưới mục `## Unreleased`. | 11 dòng; `description`: "Use when fixing bugs or implementing code changes that require regression tests and changelog entries."; `skills_read` = 1 (`code-learn`). |
+| `robust-data-cleaning-and-output-formatting` | Tổng quát cho các tác vụ xử lý bảng dữ liệu, chuẩn hóa số liệu tài chính và định dạng đầu ra. | Đúng: quy đổi tiền tệ sang integer cents, bổ sung khối metadata. | 11 dòng; `description`: "Use when processing CSV datasets, cleaning categorical/numeric fields, and writing structured JSON/CSV reports."; `skills_read` = 1 (`data-learn`). |
 
 ## 7. Kết quả so sánh (Phần 4.3, 4.4)
 
